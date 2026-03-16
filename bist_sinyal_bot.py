@@ -46,9 +46,8 @@ GMAIL_GONDEREN   = os.getenv("GMAIL_GONDEREN", "")
 GMAIL_SIFRE      = os.getenv("GMAIL_SIFRE", "")
 GMAIL_ALICI      = os.getenv("GMAIL_ALICI", "")
 
-# Bildirim kanalları — istediğinizi True/False yapın
-TELEGRAM_AKTIF  = False
-EMAIL_AKTIF     = True
+TELEGRAM_AKTIF   = os.getenv("TELEGRAM_AKTIF", "true").lower() == "true"
+EMAIL_AKTIF      = os.getenv("EMAIL_AKTIF", "true").lower() == "true"
 
 # ─────────────────────────────────────────
 #  HİSSE TEKNİK SEVİYELERİ
