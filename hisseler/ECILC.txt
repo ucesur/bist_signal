@@ -1,0 +1,11 @@
+# Eczacıbaşı İlaç — Teknik Seviyeler
+# Güncelleme: 18.03.2026
+
+ad             = Eczacıbaşı İlaç
+destek_guclu   = 112.00
+destek_orta    = 114.00
+direnc_1       = 117.00
+direnc_2       = 120.00
+direnc_3       = 128.00
+stop_yuzde     = 0.03
+hacim_carpani  = 1.5

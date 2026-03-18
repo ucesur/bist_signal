@@ -1,0 +1,11 @@
+# Türk Traktör — Teknik Seviyeler
+# Güncelleme: 18.03.2026
+
+ad             = Türk Traktör
+destek_guclu   = 440.00
+destek_orta    = 460.00
+direnc_1       = 480.00
+direnc_2       = 502.50
+direnc_3       = 575.00
+stop_yuzde     = 0.04
+hacim_carpani  = 1.5

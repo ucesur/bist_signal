@@ -1,0 +1,12 @@
+# Kocaer Çelik — Teknik Seviyeler
+# Güncelleme: 18.03.2026
+# Satırları # ile yoruma alabilirsiniz.
+
+ad             = Kocaer Çelik
+destek_guclu   = 11.00
+destek_orta    = 11.80
+direnc_1       = 12.20
+direnc_2       = 12.60
+direnc_3       = 14.05
+stop_yuzde     = 0.04
+hacim_carpani  = 1.5
