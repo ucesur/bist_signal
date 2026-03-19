@@ -1,0 +1,11 @@
+# Eczacibasi Pharma — Technical Levels
+# Updated: 18.03.2026
+
+name              = Eczacibasi Pharma
+strong_support    = 112.00
+mid_support       = 114.00
+resistance_1      = 117.00
+resistance_2      = 120.00
+resistance_3      = 128.00
+stop_pct          = 0.03
+volume_multiplier = 1.5

@@ -1,0 +1,11 @@
+# Kocaer Çelik — Technical Levels
+# Updated: 18.03.2026
+
+name              = Kocaer Çelik
+strong_support    = 11.00
+mid_support       = 11.80
+resistance_1      = 12.20
+resistance_2      = 12.60
+resistance_3      = 14.05
+stop_pct          = 0.04
+volume_multiplier = 1.5

@@ -1,0 +1,11 @@
+# Türk Traktör — Technical Levels
+# Updated: 18.03.2026
+
+name              = Türk Traktör
+strong_support    = 440.00
+mid_support       = 460.00
+resistance_1      = 480.00
+resistance_2      = 502.50
+resistance_3      = 575.00
+stop_pct          = 0.04
+volume_multiplier = 1.5
