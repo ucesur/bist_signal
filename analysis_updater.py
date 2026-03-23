@@ -53,10 +53,44 @@ ANALYSIS_PROMPT_TEMPLATE = """
 Perform a technical analysis of BIST:{symbol} on TradingView.
 
 Steps:
-1. Open https://www.tradingview.com/chart/ in Chrome
-2. Search for "BIST:{symbol}" and open the chart
-3. Analyse the following timeframes in order: Weekly (1W), Daily (1D), Hourly (1H)
-4. Take a screenshot at each timeframe and examine it
+1. Use the Bash tool to open TradingView with Playwright (headless=False):
+   - Run: python3 -c "
+import subprocess, sys
+subprocess.run([sys.executable, '-c', '''
+from playwright.sync_api import sync_playwright
+import time, base64, os
+
+with sync_playwright() as p:
+    browser = p.chromium.launch(headless=False, args=[\"--start-maximized\"])
+    page = browser.new_page(viewport={{\"width\": 1600, \"height\": 900}})
+
+    # Weekly chart
+    page.goto(\"https://www.tradingview.com/chart/?symbol=BIST:{symbol}&interval=W\", wait_until=\"networkidle\", timeout=30000)
+    time.sleep(5)
+    page.screenshot(path=\"/tmp/{symbol}_1W.png\")
+
+    # Daily chart
+    page.goto(\"https://www.tradingview.com/chart/?symbol=BIST:{symbol}&interval=D\", wait_until=\"networkidle\", timeout=30000)
+    time.sleep(5)
+    page.screenshot(path=\"/tmp/{symbol}_1D.png\")
+
+    # Hourly chart
+    page.goto(\"https://www.tradingview.com/chart/?symbol=BIST:{symbol}&interval=60\", wait_until=\"networkidle\", timeout=30000)
+    time.sleep(5)
+    page.screenshot(path=\"/tmp/{symbol}_1H.png\")
+
+    browser.close()
+    print(\"Screenshots saved.\")
+'''])
+"
+   If playwright is not installed, run: pip install playwright && playwright install chromium
+
+2. Read and analyse the three saved screenshots:
+   - /tmp/{symbol}_1W.png  (Weekly)
+   - /tmp/{symbol}_1D.png  (Daily)
+   - /tmp/{symbol}_1H.png  (Hourly)
+
+3. Identify support/resistance levels, trend direction, and any chart patterns.
 
 Return your analysis ONLY in the following JSON format (nothing else):
 
@@ -77,13 +111,13 @@ Return your analysis ONLY in the following JSON format (nothing else):
 }}
 
 Rules:
-- All price values must come from the actual TradingView chart
-- strong_support: Strongest support level (confirmed by session closes)
-- mid_support: Second support level
+- All price values must come from the actual chart screenshots
+- strong_support: Strongest support (confirmed by multiple session closes)
+- mid_support: Secondary support level
 - resistance_1/2/3: Resistance levels ordered nearest to furthest
-- stop_pct: Between 0.03-0.06 based on volatility
+- stop_pct: Between 0.03-0.06 based on observed volatility
 - volume_multiplier: Volume filter, usually 1.5
-- Return JSON only — do not wrap in markdown code blocks
+- Return JSON only — no markdown code blocks, no extra text
 """
 
 
@@ -91,14 +125,16 @@ Rules:
 #  CLAUDE CODE RUNNER
 # ─────────────────────────────────────────
 
-def run_claude_code(prompt: str, timeout: int = 180) -> Optional[str]:
+def run_claude_code(prompt: str, timeout: int = 360) -> Optional[str]:
     """
-    Runs Claude Code via subprocess with the --chrome flag.
-    Returns the output as a string, or None on failure.
+    Runs Claude Code via subprocess.
+    Uses --dangerously-skip-permissions to avoid interactive prompts.
+    Does NOT use --chrome (avoids extension site restrictions).
+    Instead, the prompt instructs Claude to use Playwright directly.
     """
     try:
         result = subprocess.run(
-            ["claude", "--chrome", "--print", prompt],
+            ["claude", "--dangerously-skip-permissions", "--print", prompt],
             capture_output=True,
             text=True,
             timeout=timeout,
@@ -112,7 +148,7 @@ def run_claude_code(prompt: str, timeout: int = 180) -> Optional[str]:
         log.error("'claude' command not found. Run: npm install -g @anthropic-ai/claude-code")
         return None
     except subprocess.TimeoutExpired:
-        log.error(f"Claude Code timed out ({timeout}s).")
+        log.error(f"Claude Code timed out ({timeout}s). Try increasing the timeout.")
         return None
     except Exception as e:
         log.error(f"Claude Code execution error: {e}")
@@ -210,7 +246,7 @@ def analyse_stock(symbol: str) -> bool:
     date   = datetime.now().strftime("%d.%m.%Y %H:%M")
     prompt = ANALYSIS_PROMPT_TEMPLATE.format(symbol=symbol, date=date)
 
-    response = run_claude_code(prompt, timeout=180)
+    response = run_claude_code(prompt, timeout=360)
     if not response:
         log.error(f"[ANALYSIS] {symbol}: No response from Claude Code.")
         return False

@@ -21,6 +21,7 @@ import schedule
 import smtplib
 import time
 import logging
+import logging.handlers
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime
@@ -31,13 +32,37 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # ─────────────────────────────────────────
-#  LOGGING
+#  LOGGING — Console + Rotating File
 # ─────────────────────────────────────────
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
+
+LOG_FILE     = os.getenv("LOG_FILE", "bist.log")
+LOG_MAX_MB   = int(os.getenv("LOG_MAX_MB", "10"))      # rotate after 10 MB
+LOG_BACKUPS  = int(os.getenv("LOG_BACKUPS", "7"))       # keep 7 rotated files
+LOG_LEVEL    = os.getenv("LOG_LEVEL", "INFO").upper()   # INFO or DEBUG
+
+_fmt     = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s",
+                              datefmt="%Y-%m-%d %H:%M:%S")
+
+# Console handler
+_console = logging.StreamHandler()
+_console.setFormatter(_fmt)
+_console.setLevel(getattr(logging, LOG_LEVEL, logging.INFO))
+
+# Clear log file on every startup
+open(LOG_FILE, "w").close()
+
+# Rotating file handler — new file every LOG_MAX_MB, keeps LOG_BACKUPS old files
+_file_handler = logging.handlers.RotatingFileHandler(
+    LOG_FILE,
+    maxBytes=LOG_MAX_MB * 1024 * 1024,
+    backupCount=LOG_BACKUPS,
+    encoding="utf-8",
 )
+_file_handler.setFormatter(_fmt)
+_file_handler.setLevel(logging.DEBUG)   # File captures DEBUG too
+
+# Root logger
+logging.basicConfig(level=logging.DEBUG, handlers=[_console, _file_handler])
 log = logging.getLogger(__name__)
 
 # ─────────────────────────────────────────
@@ -408,7 +433,10 @@ def _update_volume_avg(symbol: str, new_volume: int) -> int:
     if symbol not in _volume_history:
         _volume_history[symbol] = []
     history = _volume_history[symbol]
-    if new_volume > 0:
+    # Skip stale/repeated volume — Bigpara sometimes returns the same value
+    # multiple times in a row when it throttles (401 fallback caches last value).
+    # Adding duplicates inflates avg_vol and permanently suppresses signals.
+    if new_volume > 0 and (not history or new_volume != history[-1]):
         history.append(new_volume)
     if len(history) > VOLUME_WINDOW:
         history.pop(0)
@@ -438,32 +466,54 @@ class Signal:
 def generate_signal(symbol: str, data: dict, stocks: dict) -> Signal:
     s          = stocks[symbol]
     price      = data["price"]
-    volume_ok  = data["volume"] > data["avg_vol"] * s["volume_multiplier"]
+    volume     = data["volume"]
+    avg_vol    = data["avg_vol"]
+    volume_ok  = volume > avg_vol * s["volume_multiplier"]
+    # Log volume ratio every scan so we can monitor why signals fire or don't
+    vol_ratio  = (volume / avg_vol) if avg_vol > 0 else 0
+    log.debug(f"{symbol}: vol_ratio={vol_ratio:.2f} (need {s['volume_multiplier']:.1f}x)")
     stop       = round(price * (1 - s["stop_pct"]), 2)
 
-    if price <= s["strong_support"] and volume_ok:
-        return Signal(symbol, s["name"], "BUY", "STRONG", price,
-                      f"Strong support ({s['strong_support']} TRY) + high volume",
-                      stop, s["resistance_1"], s["resistance_2"], s["resistance_3"], volume_ok, data["time"])
+    # ── BUY signals ──────────────────────────────────────────────────────
+    if price <= s["strong_support"]:
+        # Strong support: fire with OR without volume confirmation
+        strength = "STRONG" if volume_ok else "STRONG (low vol)"
+        return Signal(symbol, s["name"], "BUY", strength, price,
+                      f"Strong support ({s['strong_support']} TRY)"
+                      + (" + high volume" if volume_ok else " ⚠️ low volume"),
+                      stop, s["resistance_1"], s["resistance_2"], s["resistance_3"],
+                      volume_ok, data["time"])
+
     elif price <= s["mid_support"] and volume_ok:
+        # Mid support: require volume confirmation
         return Signal(symbol, s["name"], "BUY", "NORMAL", price,
                       f"Support zone ({s['mid_support']} TRY) + volume confirmation",
-                      stop, s["resistance_1"], s["resistance_2"], None, volume_ok, data["time"])
+                      stop, s["resistance_1"], s["resistance_2"], None,
+                      volume_ok, data["time"])
+
     elif price > s["resistance_1"] and volume_ok:
+        # Breakout: require volume confirmation
         return Signal(symbol, s["name"], "BUY", "BREAKOUT", price,
                       f"Resistance broken ({s['resistance_1']} TRY) + volume confirmation ✅",
-                      s["mid_support"], s["resistance_2"], s["resistance_3"], None, volume_ok, data["time"])
+                      s["mid_support"], s["resistance_2"], s["resistance_3"], None,
+                      volume_ok, data["time"])
+
+    # ── SELL signals — never require volume ──────────────────────────────
     elif price >= s["resistance_3"]:
         return Signal(symbol, s["name"], "SELL", "TAKE PROFIT", price,
                       f"3rd target ({s['resistance_3']} TRY) — close full position",
                       None, None, None, None, volume_ok, data["time"])
+
     elif price >= s["resistance_2"]:
         return Signal(symbol, s["name"], "SELL", "TAKE PROFIT", price,
                       f"2nd target ({s['resistance_2']} TRY) — close 50% of position",
                       None, None, None, None, volume_ok, data["time"])
+
+    # ── WAIT ─────────────────────────────────────────────────────────────
     else:
         return Signal(symbol, s["name"], "WAIT", "NEUTRAL", price,
-                      f"Range-bound ({s['mid_support']}–{s['resistance_1']} TRY)",
+                      f"Range-bound ({s['mid_support']}–{s['resistance_1']} TRY)"
+                      + f" | vol {vol_ratio:.1f}x",
                       None, None, None, None, volume_ok, data["time"])
 
 
@@ -738,7 +788,12 @@ def scan():
             continue
 
         signal = generate_signal(symbol, data, stocks)
-        log.info(f"{symbol}: {signal.price} TRY → {signal.side} ({signal.strength})")
+        vol_ratio = (data["volume"] / data["avg_vol"]) if data["avg_vol"] > 0 else 0
+        # Show price change vs last scan for quick trend reading
+        prev_price = last_signals[symbol].price if symbol in last_signals else data["price"]
+        price_chg  = data["price"] - prev_price
+        chg_str    = f" ({price_chg:+.2f})" if price_chg != 0 else ""
+        log.info(f"{symbol}: {signal.price} TRY{chg_str} → {signal.side} ({signal.strength}) | vol {vol_ratio:.1f}x")
 
         check_stop_loss(symbol, signal.price, stocks)
 
@@ -761,9 +816,10 @@ if __name__ == "__main__":
     stocks = scan_stocks()
 
     log.info("=" * 50)
-    log.info("  BIST Signal Bot v1.5 — Dynamic Stocks")
+    log.info("  BIST Signal Bot v1.6 — Dynamic Stocks")
     log.info(f"  Loaded stocks   : {', '.join(sorted(stocks)) if stocks else 'NONE'}")
     log.info(f"  Stocks folder   : {os.path.abspath(STOCKS_FOLDER)}/")
+    log.info(f"  Log file        : {os.path.abspath(LOG_FILE)}")
     log.info(f"  Starting balance: {portfolio.starting_balance:,.0f} TRY")
     log.info(f"  Telegram : {'ON' if TELEGRAM_ENABLED else 'OFF'}")
     log.info(f"  Email    : {'ON' if EMAIL_ENABLED else 'OFF'}")
@@ -771,7 +827,7 @@ if __name__ == "__main__":
     log.info("💡 To add a stock: create stocks/SYMBOL.txt")
 
     scan()
-    schedule.every(10).minutes.do(scan)
+    schedule.every(1).minutes.do(scan)
 
     log.info("Bot running. Press Ctrl+C to stop.")
     while True:
