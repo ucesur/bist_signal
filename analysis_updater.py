@@ -90,7 +90,7 @@ with sync_playwright() as p:
    - /tmp/{symbol}_1D.png  (Daily)
    - /tmp/{symbol}_1H.png  (Hourly)
 
-3. Identify support/resistance levels, trend direction, and any chart patterns.
+3. Identify support/resistance levels, trend direction, trend strength, and any chart patterns.
 
 Return your analysis ONLY in the following JSON format (nothing else):
 
@@ -104,7 +104,8 @@ Return your analysis ONLY in the following JSON format (nothing else):
   "resistance_3": 0.00,
   "stop_pct": 0.04,
   "volume_multiplier": 1.5,
-  "trend": "UP/DOWN/SIDEWAYS",
+  "trend": "up/down/sideways",
+  "trend_strength": "strong/weak",
   "pattern": "Detected chart pattern or NONE",
   "summary": "2-3 sentence technical outlook",
   "updated": "{date}"
@@ -117,6 +118,8 @@ Rules:
 - resistance_1/2/3: Resistance levels ordered nearest to furthest
 - stop_pct: Between 0.03-0.06 based on observed volatility
 - volume_multiplier: Volume filter, usually 1.5
+- trend: Determine from weekly chart. "up" = higher highs + higher lows. "down" = lower highs + lower lows. "sideways" = no clear direction.
+- trend_strength: "strong" = clear sustained trend with momentum. "weak" = trend exists but losing momentum or early stage.
 - Return JSON only — no markdown code blocks, no extra text
 """
 
@@ -211,7 +214,7 @@ def update_txt(symbol: str, data: dict) -> bool:
     content = f"""\
 # {data.get('name', symbol)} — Technical Levels
 # Last updated    : {timestamp}
-# Trend           : {data.get('trend', '—')}
+# Trend           : {data.get('trend', '—')} ({data.get('trend_strength', '—')})
 # Pattern         : {data.get('pattern', '—')}
 # Summary         : {data.get('summary', '—')}
 
@@ -223,6 +226,8 @@ resistance_2      = {data.get('resistance_2', 0):.2f}
 resistance_3      = {data.get('resistance_3', 0):.2f}
 stop_pct          = {data.get('stop_pct', 0.04):.2f}
 volume_multiplier = {data.get('volume_multiplier', 1.5):.1f}
+trend             = {data.get('trend', 'sideways').lower()}
+trend_strength    = {data.get('trend_strength', 'weak').lower()}
 """
 
     try:
@@ -267,7 +272,7 @@ def analyse_stock(symbol: str) -> bool:
     log.info(
         f"[ANALYSIS] {symbol}: support={data['strong_support']}/{data['mid_support']} "
         f"| resistance={data['resistance_1']}/{data['resistance_2']}/{data['resistance_3']} "
-        f"| trend={data.get('trend', '?')}"
+        f"| trend={data.get('trend', '?')} ({data.get('trend_strength', '?')})"
     )
 
     return update_txt(symbol, data)

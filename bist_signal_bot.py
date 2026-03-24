@@ -92,6 +92,9 @@ REQUIRED_FIELDS = [
     "stop_pct", "volume_multiplier",
 ]
 
+# Fields that stay as strings (not converted to float)
+STRING_FIELDS = {"name", "trend", "trend_strength"}
+
 def load_stock(file_path: str) -> Optional[tuple]:
     """
     Reads a single .txt file and converts it to a stock dictionary.
@@ -106,6 +109,8 @@ def load_stock(file_path: str) -> Optional[tuple]:
         resistance_3      = 14.05
         stop_pct          = 0.04
         volume_multiplier = 1.5
+        trend             = up
+        trend_strength    = weak
     """
     symbol = os.path.splitext(os.path.basename(file_path))[0].upper()
     data   = {}
@@ -121,18 +126,24 @@ def load_stock(file_path: str) -> Optional[tuple]:
                 key, _, value = line.partition("=")
                 key   = key.strip().lower()
                 value = value.strip()
-                if key != "name":
+                if key in STRING_FIELDS:
+                    data[key] = value.lower()   # normalise: "UP" → "up"
+                else:
                     try:
                         value = float(value.replace(",", "."))
                     except ValueError:
                         log.warning(f"{file_path}:{line_no} — '{key}' could not be converted to float: {value!r}")
                         return None
-                data[key] = value
+                    data[key] = value
 
         missing = [f for f in REQUIRED_FIELDS if f not in data]
         if missing:
             log.error(f"{file_path} — Missing fields: {missing}")
             return None
+
+        # trend / trend_strength are optional — default to sideways/weak if absent
+        data.setdefault("trend",          "sideways")
+        data.setdefault("trend_strength", "weak")
 
         return symbol, data
 
@@ -182,6 +193,8 @@ resistance_2      = 12.60
 resistance_3      = 14.05
 stop_pct          = 0.04
 volume_multiplier = 1.5
+trend             = sideways
+trend_strength    = weak
 """,
     "ECILC.txt": """\
 # Eczacibasi Pharma — Technical Levels
@@ -195,6 +208,8 @@ resistance_2      = 120.00
 resistance_3      = 128.00
 stop_pct          = 0.03
 volume_multiplier = 1.5
+trend             = sideways
+trend_strength    = weak
 """,
     "TTRAK.txt": """\
 # Turk Traktor — Technical Levels
@@ -208,6 +223,8 @@ resistance_2      = 502.50
 resistance_3      = 575.00
 stop_pct          = 0.04
 volume_multiplier = 1.5
+trend             = sideways
+trend_strength    = weak
 """,
 }
 
@@ -469,52 +486,81 @@ def generate_signal(symbol: str, data: dict, stocks: dict) -> Signal:
     volume     = data["volume"]
     avg_vol    = data["avg_vol"]
     volume_ok  = volume > avg_vol * s["volume_multiplier"]
-    # Log volume ratio every scan so we can monitor why signals fire or don't
     vol_ratio  = (volume / avg_vol) if avg_vol > 0 else 0
     log.debug(f"{symbol}: vol_ratio={vol_ratio:.2f} (need {s['volume_multiplier']:.1f}x)")
     stop       = round(price * (1 - s["stop_pct"]), 2)
 
+    trend      = s.get("trend",          "sideways")   # up | down | sideways
+    strength_t = s.get("trend_strength", "weak")       # strong | weak
+    trend_info = f"trend={trend}/{strength_t}"
+
+    def _wait(reason: str) -> Signal:
+        return Signal(symbol, s["name"], "WAIT", "NEUTRAL", price,
+                      reason, None, None, None, None, volume_ok, data["time"])
+
     # ── BUY signals ──────────────────────────────────────────────────────
+
     if price <= s["strong_support"]:
-        # Strong support: fire with OR without volume confirmation
-        strength = "STRONG" if volume_ok else "STRONG (low vol)"
+        # Falling knife guard: strong downtrend → skip entirely
+        if trend == "down" and strength_t == "strong":
+            return _wait(
+                f"Strong support hit BUT strong downtrend — falling knife risk ⚠️ ({trend_info})"
+            )
+        # Weak downtrend → caution: fire signal but warn
+        vol_note   = " + high volume" if volume_ok else " ⚠️ low volume"
+        trend_note = " ⚠️ weak downtrend — caution" if trend == "down" else ""
+        strength   = "STRONG" if volume_ok else "STRONG (low vol)"
         return Signal(symbol, s["name"], "BUY", strength, price,
-                      f"Strong support ({s['strong_support']} TRY)"
-                      + (" + high volume" if volume_ok else " ⚠️ low volume"),
+                      f"Strong support ({s['strong_support']} TRY){vol_note}{trend_note}",
                       stop, s["resistance_1"], s["resistance_2"], s["resistance_3"],
                       volume_ok, data["time"])
 
     elif price <= s["mid_support"] and volume_ok:
-        # Mid support: require volume confirmation
+        # Mid support: blocked in any downtrend (not just strong)
+        if trend == "down":
+            return _wait(
+                f"Mid support + volume BUT downtrend — waiting for trend reversal ({trend_info})"
+            )
         return Signal(symbol, s["name"], "BUY", "NORMAL", price,
-                      f"Support zone ({s['mid_support']} TRY) + volume confirmation",
+                      f"Support zone ({s['mid_support']} TRY) + volume confirmation | {trend_info}",
                       stop, s["resistance_1"], s["resistance_2"], None,
                       volume_ok, data["time"])
 
     elif price > s["resistance_1"] and volume_ok:
-        # Breakout: require volume confirmation
+        # Breakout: blocked in downtrend (likely false breakout)
+        if trend == "down":
+            return _wait(
+                f"Breakout above R1 BUT downtrend — high false-breakout risk ({trend_info})"
+            )
         return Signal(symbol, s["name"], "BUY", "BREAKOUT", price,
-                      f"Resistance broken ({s['resistance_1']} TRY) + volume confirmation ✅",
+                      f"Resistance broken ({s['resistance_1']} TRY) + volume ✅ | {trend_info}",
                       s["mid_support"], s["resistance_2"], s["resistance_3"], None,
                       volume_ok, data["time"])
 
     # ── SELL signals — never require volume ──────────────────────────────
+
     elif price >= s["resistance_3"]:
         return Signal(symbol, s["name"], "SELL", "TAKE PROFIT", price,
                       f"3rd target ({s['resistance_3']} TRY) — close full position",
                       None, None, None, None, volume_ok, data["time"])
 
     elif price >= s["resistance_2"]:
+        # Strong uptrend: hold — target_3 is still reachable
+        if trend == "up" and strength_t == "strong":
+            return _wait(
+                f"2nd target hit BUT strong uptrend — holding for 3rd target "
+                f"({s['resistance_3']} TRY) ({trend_info})"
+            )
         return Signal(symbol, s["name"], "SELL", "TAKE PROFIT", price,
-                      f"2nd target ({s['resistance_2']} TRY) — close 50% of position",
+                      f"2nd target ({s['resistance_2']} TRY) — close 50% of position | {trend_info}",
                       None, None, None, None, volume_ok, data["time"])
 
     # ── WAIT ─────────────────────────────────────────────────────────────
     else:
-        return Signal(symbol, s["name"], "WAIT", "NEUTRAL", price,
-                      f"Range-bound ({s['mid_support']}–{s['resistance_1']} TRY)"
-                      + f" | vol {vol_ratio:.1f}x",
-                      None, None, None, None, volume_ok, data["time"])
+        return _wait(
+            f"Range-bound ({s['mid_support']}–{s['resistance_1']} TRY)"
+            f" | vol {vol_ratio:.1f}x | {trend_info}"
+        )
 
 
 # ─────────────────────────────────────────
@@ -827,7 +873,7 @@ if __name__ == "__main__":
     log.info("💡 To add a stock: create stocks/SYMBOL.txt")
 
     scan()
-    schedule.every(1).minutes.do(scan)
+    schedule.every(10).minutes.do(scan)
 
     log.info("Bot running. Press Ctrl+C to stop.")
     while True:
