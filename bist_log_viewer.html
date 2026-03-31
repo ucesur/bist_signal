@@ -1,0 +1,715 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BIST Signal Bot — Log Visualizer</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Barlow:wght@300;400;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:        #080c10;
+    --panel:     #0d1520;
+    --border:    #1a2a3a;
+    --accent:    #00d4aa;
+    --amber:     #f0a500;
+    --red:       #ff4060;
+    --blue:      #3b82f6;
+    --muted:     #4a6070;
+    --text:      #cde0ec;
+    --mono:      'Share Tech Mono', monospace;
+    --sans:      'Barlow', sans-serif;
+    --ecilc:     #00d4aa;
+    --kcaer:     #f0a500;
+    --ttrak:     #a78bfa;
+  }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    min-height: 100vh;
+    background-image:
+      radial-gradient(ellipse 80% 40% at 50% -10%, rgba(0,212,170,.07) 0%, transparent 70%),
+      repeating-linear-gradient(0deg, transparent, transparent 39px, rgba(255,255,255,.015) 39px, rgba(255,255,255,.015) 40px),
+      repeating-linear-gradient(90deg, transparent, transparent 39px, rgba(255,255,255,.015) 39px, rgba(255,255,255,.015) 40px);
+  }
+
+  /* ── HEADER ──────────────────────────────────────── */
+  header {
+    border-bottom: 1px solid var(--border);
+    padding: 14px 24px;
+    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+    backdrop-filter: blur(6px);
+    position: sticky; top: 0; z-index: 100;
+    background: rgba(8,12,16,.92);
+  }
+  .logo { font-family: var(--mono); font-size: 1.05rem; color: var(--accent); letter-spacing: 2px; text-transform: uppercase; }
+  .logo span { color: var(--amber); }
+  .tagline { font-size: .72rem; color: var(--muted); margin-top: 2px; letter-spacing: 1px; }
+  .header-right { margin-left: auto; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+
+  .pill {
+    font-family: var(--mono); font-size: .68rem;
+    padding: 4px 10px; border-radius: 20px; white-space: nowrap;
+  }
+  #statusPill {
+    background: rgba(0,212,170,.08); border: 1px solid rgba(0,212,170,.3);
+    color: var(--accent); display: none;
+  }
+  #livePill {
+    display: none; align-items: center; gap: 6px;
+    background: rgba(0,212,170,.1); border: 1px solid rgba(0,212,170,.4); color: var(--accent);
+  }
+  #livePill.paused { background: rgba(240,165,0,.08); border-color: rgba(240,165,0,.3); color: var(--amber); }
+  #livePill.error  { background: rgba(255,64,96,.08);  border-color: rgba(255,64,96,.3);  color: var(--red); }
+  .pulse {
+    width: 7px; height: 7px; border-radius: 50%; background: var(--accent);
+    animation: pulse 1.4s ease-in-out infinite; flex-shrink: 0;
+  }
+  #livePill.paused .pulse { background: var(--amber); animation: none; }
+  #livePill.error  .pulse { background: var(--red);   animation: none; }
+  @keyframes pulse {
+    0%,100% { opacity: 1; transform: scale(1); }
+    50%      { opacity: .4; transform: scale(.7); }
+  }
+
+  /* countdown ring */
+  #countdownWrap { display: none; align-items: center; gap: 5px; }
+  #countdownRing { width: 22px; height: 22px; transform: rotate(-90deg); }
+  #countdownRing circle { fill: none; stroke: var(--border); stroke-width: 2.5; }
+  #countdownArc  { fill: none; stroke: var(--accent); stroke-width: 2.5; stroke-linecap: round;
+    stroke-dasharray: 56.5; stroke-dashoffset: 0; transition: stroke-dashoffset .9s linear; }
+  #countdownLabel { font-family: var(--mono); font-size: .68rem; color: var(--muted); min-width: 22px; }
+
+  /* header buttons */
+  .hdr-btn {
+    font-family: var(--sans); font-size: .75rem; font-weight: 600;
+    padding: 6px 14px; border-radius: 6px; border: 1px solid var(--border);
+    background: transparent; color: var(--text); cursor: pointer; white-space: nowrap;
+    transition: background .15s, border-color .15s, color .15s;
+  }
+  .hdr-btn:hover { background: rgba(255,255,255,.06); border-color: var(--muted); }
+  .hdr-btn.danger { border-color: var(--red); color: var(--red); }
+  .hdr-btn.danger:hover { background: rgba(255,64,96,.08); }
+  select.hdr-select {
+    font-family: var(--mono); font-size: .68rem; padding: 5px 8px;
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 6px; color: var(--muted); cursor: pointer; outline: none;
+  }
+  select.hdr-select:focus { border-color: var(--accent); color: var(--text); }
+
+  /* flash on update */
+  @keyframes flashBorder {
+    0%   { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(0,212,170,.25); }
+    100% { border-color: var(--border); box-shadow: none; }
+  }
+  .updated { animation: flashBorder .9s ease-out forwards; }
+
+  /* ── DROP ZONE ────────────────────────────────────── */
+  #dropZone {
+    margin: 48px auto; max-width: 700px;
+    border: 2px dashed var(--border); border-radius: 12px;
+    padding: 50px 40px 40px; text-align: center;
+    transition: border-color .25s, background .25s;
+  }
+  #dropZone.dragover { border-color: var(--accent); background: rgba(0,212,170,.04); }
+  #dropZone .drop-icon { font-size: 2.6rem; margin-bottom: 14px; display: block; }
+  #dropZone h2 { font-size: 1.1rem; font-weight: 600; color: var(--text); margin-bottom: 6px; }
+  #dropZone p  { font-size: .82rem; color: var(--muted); line-height: 1.7; }
+
+  .upload-actions { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; margin-top: 22px; }
+  .upload-btn {
+    display: flex; align-items: center; gap: 8px;
+    padding: 11px 22px; border-radius: 7px;
+    font-family: var(--sans); font-weight: 600; font-size: .85rem;
+    cursor: pointer; border: none; transition: opacity .2s, transform .1s;
+  }
+  .upload-btn:active { transform: scale(.97); }
+  .upload-btn.primary   { background: var(--accent); color: #080c10; }
+  .upload-btn.primary:hover { opacity: .85; }
+  .upload-btn.secondary { background: var(--panel); border: 1px solid var(--border); color: var(--text); }
+  .upload-btn.secondary:hover { border-color: var(--accent); color: var(--accent); }
+  .upload-btn.watch { background: rgba(240,165,0,.12); border: 1px solid rgba(240,165,0,.35); color: var(--amber); }
+  .upload-btn.watch:hover { background: rgba(240,165,0,.22); }
+  #fileInputHidden { display: none; }
+
+  .or-divider {
+    display: flex; align-items: center; gap: 14px;
+    margin: 28px 0; color: var(--muted); font-size: .8rem;
+  }
+  .or-divider::before, .or-divider::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+  #pasteArea {
+    width: 100%; height: 120px; background: var(--panel); border: 1px solid var(--border);
+    border-radius: 8px; color: var(--text); font-family: var(--mono); font-size: .72rem;
+    padding: 14px; resize: vertical; outline: none; transition: border-color .2s;
+  }
+  #pasteArea:focus { border-color: var(--accent); }
+  #errMsg { color: var(--red); font-size: .8rem; margin-top: 12px; min-height: 18px; }
+  #noSupportBanner {
+    display: none; margin-top: 16px; padding: 10px 16px;
+    background: rgba(240,165,0,.08); border: 1px solid rgba(240,165,0,.25);
+    border-radius: 7px; font-size: .78rem; color: var(--amber); line-height: 1.6;
+  }
+
+  /* ── DASHBOARD ────────────────────────────────────── */
+  #dashboard { display: none; padding: 24px 20px 60px; max-width: 1400px; margin: 0 auto; }
+
+  .summary-bar {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+    gap: 12px; margin-bottom: 28px;
+  }
+  .sum-card {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; padding: 14px 18px;
+    position: relative; overflow: hidden; transition: border-color .3s;
+  }
+  .sum-card::before {
+    content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px;
+  }
+  .sum-card[data-sym="ECILC"]::before  { background: var(--ecilc); }
+  .sum-card[data-sym="KCAER"]::before  { background: var(--kcaer); }
+  .sum-card[data-sym="TTRAK"]::before  { background: var(--ttrak); }
+  .sum-card[data-sym="SESSION"]::before{ background: linear-gradient(90deg, var(--ecilc), var(--kcaer), var(--ttrak)); }
+  .sym-label { font-family: var(--mono); font-size: .66rem; letter-spacing: 2px; color: var(--muted); margin-bottom: 6px; }
+  .price-big { font-size: 1.55rem; font-weight: 700; line-height: 1; margin-bottom: 4px; }
+  .sum-card[data-sym="ECILC"] .price-big { color: var(--ecilc); }
+  .sum-card[data-sym="KCAER"] .price-big { color: var(--kcaer); }
+  .sum-card[data-sym="TTRAK"] .price-big { color: var(--ttrak); }
+  .sub-info { font-family: var(--mono); font-size: .68rem; color: var(--muted); display: flex; gap: 10px; flex-wrap: wrap; }
+  .pos { color: var(--accent) !important; }
+  .neg { color: var(--red)    !important; }
+
+  .section-title {
+    font-size: .7rem; letter-spacing: 2px; text-transform: uppercase;
+    color: var(--muted); margin-bottom: 14px; display: flex; align-items: center; gap: 8px;
+  }
+  .section-title::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+
+  .charts-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(520px, 1fr));
+    gap: 18px; margin-bottom: 24px;
+  }
+  @media(max-width:580px) { .charts-grid { grid-template-columns: 1fr; } }
+
+  .chart-card {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; padding: 18px 18px 14px; transition: border-color .3s;
+  }
+  .chart-card h3 {
+    font-size: .78rem; font-weight: 600; letter-spacing: 1px;
+    margin-bottom: 12px; display: flex; align-items: center; gap: 8px;
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
+  .chart-card canvas { max-height: 210px; }
+
+  /* table */
+  .log-table-wrap { overflow-x: auto; border-radius: 10px; border: 1px solid var(--border); }
+  table { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: .7rem; }
+  thead tr { background: rgba(26,42,58,.8); }
+  thead th {
+    padding: 9px 13px; text-align: left; color: var(--muted);
+    letter-spacing: 1px; font-weight: 400; border-bottom: 1px solid var(--border); white-space: nowrap;
+  }
+  tbody tr { border-bottom: 1px solid rgba(26,42,58,.5); transition: background .12s; }
+  tbody tr:hover { background: rgba(0,212,170,.04); }
+  @keyframes highlightRow { 0% { background: rgba(0,212,170,.14); } 100% { background: transparent; } }
+  tbody tr.new-row { animation: highlightRow 1.2s ease-out; }
+  tbody td { padding: 7px 13px; white-space: nowrap; }
+  .badge { display: inline-block; padding: 2px 7px; border-radius: 4px; font-size: .63rem; letter-spacing: .5px; }
+  .badge-neutral { background: rgba(74,96,112,.25); color: var(--muted); }
+  .badge-buy     { background: rgba(0,212,170,.18);  color: var(--accent); }
+  .badge-sell    { background: rgba(255,64,96,.18);  color: var(--red); }
+  .sym-ecilc { color: var(--ecilc); }
+  .sym-kcaer { color: var(--kcaer); }
+  .sym-ttrak { color: var(--ttrak); }
+
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: var(--bg); }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+  @keyframes fadeUp { from { opacity:0; transform:translateY(14px); } to { opacity:1; transform:none; } }
+  .fade-in { animation: fadeUp .35s ease both; }
+</style>
+</head>
+<body>
+
+<!-- ── HEADER ──────────────────────────────────────────────────────────────── -->
+<header>
+  <div>
+    <div class="logo">BIST <span>Signal</span> Analyzer</div>
+    <div class="tagline">Live Log Visualizer · v2.0</div>
+  </div>
+
+  <div class="header-right">
+    <div id="statusPill" class="pill">● LOADED</div>
+
+    <!-- live controls — shown once a file is being watched -->
+    <div id="liveControls" style="display:none;align-items:center;gap:8px;flex-wrap:wrap;">
+      <select class="hdr-select" id="intervalSelect" title="Refresh interval" onchange="changeInterval()">
+        <option value="5">5 s</option>
+        <option value="10" selected>10 s</option>
+        <option value="30">30 s</option>
+        <option value="60">60 s</option>
+        <option value="120">2 min</option>
+      </select>
+
+      <div id="countdownWrap">
+        <svg id="countdownRing" viewBox="0 0 22 22">
+          <circle cx="11" cy="11" r="9"/>
+          <circle id="countdownArc" cx="11" cy="11" r="9"/>
+        </svg>
+        <span id="countdownLabel">10</span>
+      </div>
+
+      <div id="livePill" class="pill">
+        <span class="pulse"></span>
+        <span id="livePillText">LIVE</span>
+      </div>
+
+      <button class="hdr-btn" id="pauseBtn" onclick="togglePause()">⏸ Pause</button>
+      <button class="hdr-btn danger" onclick="stopWatch()">✕ Stop</button>
+    </div>
+  </div>
+</header>
+
+<!-- ── UPLOAD / PASTE ZONE ─────────────────────────────────────────────────── -->
+<div id="dropZone">
+  <span class="drop-icon">📂</span>
+  <h2>BIST Signal Bot — Log Visualizer</h2>
+  <p>Drag &amp; drop your log file, open it, or watch it live for automatic updates.</p>
+
+  <div class="upload-actions">
+    <button class="upload-btn watch"     onclick="pickAndWatch()">🔴 Watch File Live</button>
+    <button class="upload-btn secondary" onclick="document.getElementById('fileInputHidden').click()">📂 Open Once</button>
+  </div>
+  <input type="file" id="fileInputHidden" accept=".log,.txt">
+
+  <div id="noSupportBanner">
+    ⚠ <strong>Live Watch</strong> requires Chrome or Edge 86+.
+    Use <em>Open Once</em> or paste text below in Firefox / Safari.
+  </div>
+
+  <div class="or-divider">or paste log text</div>
+  <textarea id="pasteArea" placeholder="Paste log content here…&#10;2026-03-31 10:05:48 [INFO] ECILC: 107.0 TRY → WAIT (NEUTRAL) | vol 1.0x …"></textarea>
+  <div class="upload-actions">
+    <button class="upload-btn primary" onclick="parsePasted()">▶ Visualize</button>
+  </div>
+  <div id="errMsg"></div>
+</div>
+
+<!-- ── DASHBOARD ───────────────────────────────────────────────────────────── -->
+<div id="dashboard">
+  <div class="summary-bar"  id="summaryBar"></div>
+
+  <div class="section-title">Price (TRY)</div>
+  <div class="charts-grid"  id="priceChartsGrid"></div>
+
+  <div class="section-title">Volume Ratio</div>
+  <div class="charts-grid"  id="volChartsGrid"></div>
+
+  <div class="section-title">Support &amp; Resistance Distance</div>
+  <div class="charts-grid"  id="srChartsGrid"></div>
+
+  <div class="section-title" style="margin-top:8px">Scan Events</div>
+  <div class="log-table-wrap" id="logTableWrap"></div>
+</div>
+
+<!-- ── SCRIPT ──────────────────────────────────────────────────────────────── -->
+<script>
+// ─── CONSTANTS ───────────────────────────────────────────────────────────────
+const SYM_COLOR = { ECILC:'#00d4aa', KCAER:'#f0a500', TTRAK:'#a78bfa' };
+const SYM_CLASS = { ECILC:'sym-ecilc', KCAER:'sym-kcaer', TTRAK:'sym-ttrak' };
+const ARC_LEN   = 56.5; // 2π × r(9)
+
+// ─── STATE ───────────────────────────────────────────────────────────────────
+let fileHandle     = null;
+let watchTimer     = null;
+let countdownTimer = null;
+let watchInterval  = 10;
+let isPaused       = false;
+let lastEventCount = 0;
+let cdTick         = 0;
+
+// ─── PARSE ───────────────────────────────────────────────────────────────────
+function parseLog(text) {
+  const lines  = text.split('\n');
+  const data   = {};
+  const events = [];
+  // Matches both warmup lines and post-warmup lines
+  const re = /^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) \[INFO\] ([A-Z]+): ([\d.]+) TRY(?: \(([+-][\d.]+)\))? → (\w+) \((\w+)\) \| vol ([\d.]+)x.*\| sup\+([\d.]+) res-([\d.]+)/;
+  for (const line of lines) {
+    const m = line.match(re);
+    if (!m) continue;
+    const [, ts, sym, price, chg, action, signal, vol, sup, res] = m;
+    const entry = {
+      time: ts.slice(11,16), ts,
+      price:  parseFloat(price),
+      chg:    chg ? parseFloat(chg) : null,
+      action, signal,
+      vol: parseFloat(vol),
+      sup: parseFloat(sup),
+      res: parseFloat(res)
+    };
+    if (!data[sym]) data[sym] = [];
+    data[sym].push(entry);
+    events.push({ sym, ...entry });
+  }
+  return { data, events };
+}
+
+// ─── CHART HELPERS ───────────────────────────────────────────────────────────
+Chart.defaults.color = '#4a6070';
+Chart.defaults.font.family = "'Share Tech Mono', monospace";
+const gridCfg = { color:'rgba(26,42,58,.5)', drawBorder:false };
+
+let chartInstances = [];
+function destroyCharts() { chartInstances.forEach(c => c.destroy()); chartInstances = []; }
+
+function makeChart(id, datasets, opts = {}) {
+  const ctx = document.getElementById(id).getContext('2d');
+  return new Chart(ctx, {
+    type: 'line',
+    data: { datasets },
+    options: {
+      responsive: true, maintainAspectRatio: true,
+      interaction: { mode:'index', intersect:false },
+      plugins: {
+        legend: { display: datasets.length > 1, labels:{ boxWidth:10, font:{ size:10 } } },
+        tooltip: {
+          backgroundColor:'rgba(13,21,32,.95)', borderColor:'rgba(26,42,58,1)', borderWidth:1,
+          titleFont:{ size:10 }, bodyFont:{ size:10 },
+          callbacks: opts.tooltipCb || undefined
+        }
+      },
+      scales: {
+        x: { type:'category', grid:gridCfg, ticks:{ maxTicksLimit:10, font:{ size:9 } } },
+        y: { grid:gridCfg, ticks:{ font:{ size:9 } } }
+      },
+      elements: {
+        line:  { tension:.35, borderWidth:1.8 },
+        point: { radius:2, hoverRadius:5, borderWidth:1.5 }
+      }
+    }
+  });
+}
+
+// ─── RENDER ──────────────────────────────────────────────────────────────────
+function render({ data, events }, isUpdate = false) {
+  destroyCharts();
+  const symbols = Object.keys(data);
+  if (!symbols.length) { showErr('No stock data found in log.'); return; }
+
+  buildSummary(data, events, symbols, isUpdate);
+  buildPriceCharts(data, symbols);
+  buildVolCharts(data, symbols);
+  buildSRCharts(data, symbols);
+  buildTable(events, isUpdate);
+
+  document.getElementById('dropZone').style.display  = 'none';
+  document.getElementById('dashboard').style.display = 'block';
+
+  const pill = document.getElementById('statusPill');
+  pill.style.display  = 'block';
+  pill.textContent = `● ${events.length} events · ${symbols.join(' · ')}`;
+}
+
+// ── Summary cards ────────────────────────────────────────────────────────────
+function buildSummary(data, events, symbols, isUpdate) {
+  const bar = document.getElementById('summaryBar');
+  if (!isUpdate) bar.innerHTML = '';
+
+  symbols.forEach((sym, i) => {
+    const rows  = data[sym];
+    const last  = rows[rows.length - 1];
+    const first = rows[0];
+    const pctChg = ((last.price - first.price) / first.price * 100).toFixed(2);
+    const cls    = pctChg >= 0 ? 'pos' : 'neg';
+    const sign   = pctChg >= 0 ? '+' : '';
+
+    let card = bar.querySelector(`.sum-card[data-sym="${sym}"]`);
+    const fresh = !card;
+    if (fresh) {
+      card = document.createElement('div');
+      card.className = 'sum-card fade-in';
+      card.dataset.sym = sym;
+      card.style.animationDelay = `${i * .06}s`;
+      const ses = bar.querySelector('[data-sym="SESSION"]');
+      bar.insertBefore(card, ses || null);
+    } else if (isUpdate) {
+      card.classList.remove('updated'); void card.offsetWidth; card.classList.add('updated');
+    }
+    card.innerHTML = `
+      <div class="sym-label">${sym} · BIST</div>
+      <div class="price-big">${last.price.toFixed(2)}</div>
+      <div class="sub-info">
+        <span class="${cls}">${sign}${pctChg}%</span>
+        <span>vol ${last.vol.toFixed(1)}x</span>
+        <span>sup +${last.sup}</span>
+        <span>res -${last.res}</span>
+        <span>${rows.length} scans</span>
+      </div>`;
+  });
+
+  // session card
+  let ses = bar.querySelector('[data-sym="SESSION"]');
+  if (!ses) {
+    ses = document.createElement('div');
+    ses.className = 'sum-card fade-in';
+    ses.dataset.sym = 'SESSION';
+    ses.style.animationDelay = `${symbols.length * .06}s`;
+    bar.appendChild(ses);
+  }
+  const tr = events.length ? `${events[0].ts.slice(11,16)} – ${events[events.length-1].ts.slice(11,16)}` : '--';
+  ses.innerHTML = `
+    <div class="sym-label">SESSION</div>
+    <div class="price-big" style="font-size:1.1rem;color:var(--text);">${tr}</div>
+    <div class="sub-info">
+      <span>${events.length} events</span>
+      <span>${symbols.length} stocks</span>
+      ${fileHandle ? `<span style="color:var(--accent)">↻ ${watchInterval}s</span>` : ''}
+    </div>`;
+}
+
+// ── Price charts ─────────────────────────────────────────────────────────────
+function buildPriceCharts(data, symbols) {
+  const grid = document.getElementById('priceChartsGrid');
+  grid.innerHTML = '';
+  symbols.forEach(sym => {
+    const rows  = data[sym];
+    const color = SYM_COLOR[sym] || '#888';
+    const card  = document.createElement('div');
+    card.className = 'chart-card fade-in';
+    card.innerHTML = `<h3><span class="dot" style="background:${color}"></span>${sym} — Price (TRY)</h3><canvas id="priceChart_${sym}"></canvas>`;
+    grid.appendChild(card);
+    chartInstances.push(makeChart(`priceChart_${sym}`, [{
+      label: sym,
+      data: rows.map(r => ({ x: r.time, y: r.price })),
+      borderColor: color, backgroundColor: color + '18', fill: true,
+      borderWidth:1.8, pointRadius:2, pointHoverRadius:5, tension:.35
+    }], { tooltipCb: { label: c => ` ${c.parsed.y.toFixed(2)} TRY` } }));
+  });
+}
+
+// ── Volume charts ─────────────────────────────────────────────────────────────
+function buildVolCharts(data, symbols) {
+  const grid = document.getElementById('volChartsGrid');
+  grid.innerHTML = '';
+  symbols.forEach(sym => {
+    const rows  = data[sym];
+    const color = SYM_COLOR[sym] || '#888';
+    const card  = document.createElement('div');
+    card.className = 'chart-card fade-in';
+    card.innerHTML = `<h3><span class="dot" style="background:${color}"></span>${sym} — Volume Ratio</h3><canvas id="volChart_${sym}"></canvas>`;
+    grid.appendChild(card);
+    chartInstances.push(makeChart(`volChart_${sym}`, [
+      { label:'Vol Ratio',
+        data: rows.map(r => ({ x: r.time, y: r.vol })),
+        borderColor:color, backgroundColor:color+'22', fill:true,
+        borderWidth:1.6, pointRadius:2, pointHoverRadius:5, tension:.3 },
+      { label:'Threshold 1.5×',
+        data: rows.map(r => ({ x: r.time, y: 1.5 })),
+        borderColor:'rgba(255,64,96,.5)', borderDash:[5,4], borderWidth:1, pointRadius:0, tension:0 }
+    ], { tooltipCb: { label: c => ` ${c.parsed.y.toFixed(2)}x` } }));
+  });
+}
+
+// ── Support / Resistance charts ───────────────────────────────────────────────
+function buildSRCharts(data, symbols) {
+  const grid = document.getElementById('srChartsGrid');
+  grid.innerHTML = '';
+  symbols.forEach(sym => {
+    const rows  = data[sym];
+    const color = SYM_COLOR[sym] || '#888';
+    const card  = document.createElement('div');
+    card.className = 'chart-card fade-in';
+    card.innerHTML = `<h3><span class="dot" style="background:${color}"></span>${sym} — Support / Resistance Distance</h3><canvas id="srChart_${sym}"></canvas>`;
+    grid.appendChild(card);
+    chartInstances.push(makeChart(`srChart_${sym}`, [
+      { label:'Support (sup+)',
+        data: rows.map(r => ({ x: r.time, y: r.sup })),
+        borderColor:'#00d4aa', fill:false, borderWidth:1.6, pointRadius:2, pointHoverRadius:5, tension:.3 },
+      { label:'Resistance (res-)',
+        data: rows.map(r => ({ x: r.time, y: r.res })),
+        borderColor:'#ff4060', fill:false, borderWidth:1.6, pointRadius:2, pointHoverRadius:5, tension:.3 }
+    ]));
+  });
+}
+
+// ── Event table ───────────────────────────────────────────────────────────────
+function buildTable(events, isUpdate) {
+  const newCount = isUpdate ? events.length - lastEventCount : 0;
+  const rows = [...events].reverse().slice(0, 300);
+  let html = `<table><thead><tr>
+    <th>TIME</th><th>SYMBOL</th><th>PRICE (TRY)</th><th>CHG</th><th>VOL</th><th>SUP+</th><th>RES-</th><th>SIGNAL</th>
+  </tr></thead><tbody>`;
+  rows.forEach((e, idx) => {
+    const symCls  = SYM_CLASS[e.sym] || '';
+    const chgHtml = e.chg !== null
+      ? `<span class="${e.chg >= 0 ? 'pos':'neg'}">${e.chg >= 0 ? '+':''}${e.chg.toFixed(2)}</span>`
+      : `<span style="color:var(--muted)">—</span>`;
+    const badgeCls = e.signal === 'BUY' ? 'badge-buy' : e.signal === 'SELL' ? 'badge-sell' : 'badge-neutral';
+    const newCls   = isUpdate && idx < newCount ? ' new-row' : '';
+    html += `<tr class="${newCls}">
+      <td style="color:var(--muted)">${e.ts.slice(11,16)}</td>
+      <td class="${symCls}">${e.sym}</td>
+      <td>${e.price.toFixed(2)}</td>
+      <td>${chgHtml}</td>
+      <td>${e.vol.toFixed(2)}x</td>
+      <td class="pos">+${e.sup.toFixed(2)}</td>
+      <td class="neg">-${e.res.toFixed(2)}</td>
+      <td><span class="badge ${badgeCls}">${e.signal}</span></td>
+    </tr>`;
+  });
+  document.getElementById('logTableWrap').innerHTML = html + '</tbody></table>';
+}
+
+// ─── LIVE WATCH ───────────────────────────────────────────────────────────────
+async function pickAndWatch() {
+  if (!('showOpenFilePicker' in window)) {
+    document.getElementById('noSupportBanner').style.display = 'block';
+    return;
+  }
+  try {
+    [fileHandle] = await window.showOpenFilePicker({
+      types: [{ description:'Log files', accept:{'text/plain':['.log','.txt']} }],
+      multiple: false
+    });
+    const text   = await (await fileHandle.getFile()).text();
+    const parsed = parseLog(text);
+    lastEventCount = parsed.events.length;
+    tryRender(text, false);
+    startWatch();
+  } catch(e) {
+    if (e.name !== 'AbortError') showErr('Could not open file: ' + e.message);
+  }
+}
+
+function startWatch() {
+  clearInterval(watchTimer);
+  clearInterval(countdownTimer);
+  watchInterval = parseInt(document.getElementById('intervalSelect').value, 10);
+  isPaused = false;
+
+  // show controls
+  const lc = document.getElementById('liveControls');
+  lc.style.display = 'flex';
+  setLiveState('live');
+  startCountdown();
+
+  watchTimer = setInterval(pollFile, watchInterval * 1000);
+}
+
+async function pollFile() {
+  if (isPaused || !fileHandle) return;
+  try {
+    const text   = await (await fileHandle.getFile()).text();
+    const parsed = parseLog(text);
+    if (parsed.events.length !== lastEventCount) {
+      const isUpdate = lastEventCount > 0;
+      render(parsed, isUpdate);
+      lastEventCount = parsed.events.length;
+    }
+    setLiveState('live');
+  } catch(e) {
+    setLiveState('error');
+  }
+}
+
+function stopWatch() {
+  clearInterval(watchTimer);
+  clearInterval(countdownTimer);
+  watchTimer = countdownTimer = null;
+  fileHandle = null;
+  isPaused   = false;
+  document.getElementById('liveControls').style.display  = 'none';
+  document.getElementById('countdownWrap').style.display = 'none';
+  const lp = document.getElementById('livePill');
+  lp.style.display = 'none';
+}
+
+function togglePause() {
+  isPaused = !isPaused;
+  document.getElementById('pauseBtn').textContent = isPaused ? '▶ Resume' : '⏸ Pause';
+  setLiveState(isPaused ? 'paused' : 'live');
+}
+
+function changeInterval() { if (fileHandle) startWatch(); }
+
+// ── Countdown ring ────────────────────────────────────────────────────────────
+function startCountdown() {
+  clearInterval(countdownTimer);
+  const wrap = document.getElementById('countdownWrap');
+  wrap.style.display = 'flex';
+  cdTick = watchInterval;
+  drawRing();
+  countdownTimer = setInterval(() => {
+    cdTick--;
+    if (cdTick < 0) cdTick = watchInterval;
+    drawRing();
+  }, 1000);
+}
+
+function drawRing() {
+  const frac = cdTick / watchInterval;
+  const arc  = document.getElementById('countdownArc');
+  arc.style.strokeDashoffset = ARC_LEN * (1 - frac);
+  arc.style.stroke = frac > .3 ? 'var(--accent)' : 'var(--amber)';
+  document.getElementById('countdownLabel').textContent = cdTick;
+}
+
+function setLiveState(state) {
+  const pill = document.getElementById('livePill');
+  const txt  = document.getElementById('livePillText');
+  pill.className = 'pill';
+  pill.style.display = 'flex';
+  if (state === 'paused') pill.classList.add('paused');
+  if (state === 'error')  pill.classList.add('error');
+  txt.textContent = { live:'LIVE', paused:'PAUSED', error:'READ ERROR' }[state] || 'LIVE';
+}
+
+// ─── ONE-SHOT FILE INPUT ──────────────────────────────────────────────────────
+document.getElementById('fileInputHidden').addEventListener('change', e => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const r = new FileReader();
+  r.onload = ev => tryRender(ev.target.result, false);
+  r.readAsText(file);
+});
+
+// ─── PASTE ────────────────────────────────────────────────────────────────────
+function parsePasted() {
+  const text = document.getElementById('pasteArea').value.trim();
+  if (!text) { showErr('Please paste log content first.'); return; }
+  tryRender(text, false);
+}
+
+function tryRender(text, isUpdate) {
+  clearErr();
+  try {
+    const parsed = parseLog(text);
+    const total  = Object.values(parsed.data).reduce((s, v) => s + v.length, 0);
+    if (!total) { showErr('No matching log lines found. Make sure this is a BIST Signal Bot log.'); return; }
+    render(parsed, isUpdate);
+  } catch(e) { showErr('Parse error: ' + e.message); }
+}
+
+// ─── DRAG & DROP ─────────────────────────────────────────────────────────────
+const dz = document.getElementById('dropZone');
+dz.addEventListener('dragover',  e => { e.preventDefault(); dz.classList.add('dragover'); });
+dz.addEventListener('dragleave', () => dz.classList.remove('dragover'));
+dz.addEventListener('drop', e => {
+  e.preventDefault(); dz.classList.remove('dragover');
+  const file = e.dataTransfer.files[0];
+  if (!file) return;
+  const r = new FileReader();
+  r.onload = ev => tryRender(ev.target.result, false);
+  r.readAsText(file);
+});
+
+function showErr(m) { document.getElementById('errMsg').textContent = m; }
+function clearErr()  { document.getElementById('errMsg').textContent = ''; }
+</script>
+</body>
+</html>
