@@ -78,6 +78,8 @@ EMAIL_ENABLED    = os.getenv("EMAIL_AKTIF", "true").lower() == "true"
 
 STOCKS_FOLDER    = os.getenv("HISSELER_KLASOR", "stocks")
 
+SCAN_INTERVAL    = int(os.getenv("SCAN_INTERVAL_MIN", "10"))  # minutes between scans
+VOL_WARMUP_SCANS = int(os.getenv("VOL_WARMUP_SCANS",  "5"))   # ignore vol signals until N readings
 SESSION_START    = 10
 SESSION_END      = 18
 COMMISSION_RATE  = 0.001   # 0.1% buy + 0.1% sell (standard broker)
@@ -390,7 +392,11 @@ def fetch_price(symbol: str, retries: int = 3) -> Optional[dict]:
     Fetches stock data from Bigpara (~15 min delayed).
     Retries up to 3 times on connection errors (3s, 6s apart).
     Uses 'alis' (bid) during session and 'kapanis' (close) outside session.
+    Adds a small random jitter before each request to reduce 401 rate-limiting.
     """
+    import random
+    time.sleep(random.uniform(0.3, 1.2))   # jitter: spread requests, avoid rate-limit bursts
+
     url = f"https://bigpara.hurriyet.com.tr/api/v1/borsa/hisseyuzeysel/{symbol}"
     for i in range(1, retries + 1):
         try:
@@ -416,15 +422,17 @@ def fetch_price(symbol: str, retries: int = 3) -> Optional[dict]:
             price    = float(str(raw_price).replace(",", "."))
             volume   = _parse_volume(data.get("hacimtl") or "0")
             change   = float(str(data.get("yuzdedegisim") or "0").replace(",", ".").replace("%", ""))
+            avg_vol, warmup_count = _update_volume_avg(symbol, volume)
             _current_prices[symbol] = price
 
             return {
-                "symbol":   symbol,
-                "price":    price,
-                "volume":   volume,
-                "avg_vol":  _update_volume_avg(symbol, volume),
-                "change":   change,
-                "time":     datetime.now().strftime("%H:%M"),
+                "symbol":       symbol,
+                "price":        price,
+                "volume":       volume,
+                "avg_vol":      avg_vol,
+                "vol_warmup":   warmup_count,   # how many unique vol readings so far
+                "change":       change,
+                "time":         datetime.now().strftime("%H:%M"),
             }
 
         except requests.exceptions.RequestException as e:
@@ -446,7 +454,8 @@ def _parse_volume(volume_str: str) -> int:
         return 0
 
 
-def _update_volume_avg(symbol: str, new_volume: int) -> int:
+def _update_volume_avg(symbol: str, new_volume: int) -> tuple:
+    """Returns (avg_vol, warmup_count) where warmup_count = number of unique readings so far."""
     if symbol not in _volume_history:
         _volume_history[symbol] = []
     history = _volume_history[symbol]
@@ -457,7 +466,8 @@ def _update_volume_avg(symbol: str, new_volume: int) -> int:
         history.append(new_volume)
     if len(history) > VOLUME_WINDOW:
         history.pop(0)
-    return int(sum(history) / len(history)) if history else new_volume or 1
+    avg = int(sum(history) / len(history)) if history else new_volume or 1
+    return avg, len(history)
 
 
 # ─────────────────────────────────────────
@@ -485,14 +495,20 @@ def generate_signal(symbol: str, data: dict, stocks: dict) -> Signal:
     price      = data["price"]
     volume     = data["volume"]
     avg_vol    = data["avg_vol"]
-    volume_ok  = volume > avg_vol * s["volume_multiplier"]
+    warmup     = data.get("vol_warmup", VOL_WARMUP_SCANS)
+    volume_ok  = (volume > avg_vol * s["volume_multiplier"]) and (warmup >= VOL_WARMUP_SCANS)
     vol_ratio  = (volume / avg_vol) if avg_vol > 0 else 0
-    log.debug(f"{symbol}: vol_ratio={vol_ratio:.2f} (need {s['volume_multiplier']:.1f}x)")
+    log.debug(f"{symbol}: vol_ratio={vol_ratio:.2f} (need {s['volume_multiplier']:.1f}x) warmup={warmup}/{VOL_WARMUP_SCANS}")
     stop       = round(price * (1 - s["stop_pct"]), 2)
 
     trend      = s.get("trend",          "sideways")   # up | down | sideways
     strength_t = s.get("trend_strength", "weak")       # strong | weak
     trend_info = f"trend={trend}/{strength_t}"
+
+    # Distance to nearest levels — logged at DEBUG for visibility
+    dist_sup = round(price - s["strong_support"], 2)
+    dist_res = round(s["resistance_1"] - price, 2)
+    log.debug(f"{symbol}: +{dist_sup:.2f} above support | {dist_res:.2f} below resistance_1")
 
     def _wait(reason: str) -> Signal:
         return Signal(symbol, s["name"], "WAIT", "NEUTRAL", price,
@@ -835,11 +851,20 @@ def scan():
 
         signal = generate_signal(symbol, data, stocks)
         vol_ratio = (data["volume"] / data["avg_vol"]) if data["avg_vol"] > 0 else 0
-        # Show price change vs last scan for quick trend reading
+        warmup    = data.get("vol_warmup", 0)
+        warmup_str = "" if warmup >= VOL_WARMUP_SCANS else f" ⏳warmup {warmup}/{VOL_WARMUP_SCANS}"
+        # Show price change vs last scan and distance to nearest levels
         prev_price = last_signals[symbol].price if symbol in last_signals else data["price"]
         price_chg  = data["price"] - prev_price
         chg_str    = f" ({price_chg:+.2f})" if price_chg != 0 else ""
-        log.info(f"{symbol}: {signal.price} TRY{chg_str} → {signal.side} ({signal.strength}) | vol {vol_ratio:.1f}x")
+        s          = stocks[symbol]
+        dist_sup   = round(data["price"] - s["strong_support"], 2)
+        dist_res   = round(s["resistance_1"] - data["price"], 2)
+        log.info(
+            f"{symbol}: {signal.price} TRY{chg_str} → {signal.side} ({signal.strength})"
+            f" | vol {vol_ratio:.1f}x{warmup_str}"
+            f" | sup+{dist_sup:.2f} res-{dist_res:.2f}"
+        )
 
         check_stop_loss(symbol, signal.price, stocks)
 
@@ -862,20 +887,33 @@ if __name__ == "__main__":
     stocks = scan_stocks()
 
     log.info("=" * 50)
-    log.info("  BIST Signal Bot v1.6 — Dynamic Stocks")
+    log.info("  BIST Signal Bot v1.7 — Dynamic Stocks")
     log.info(f"  Loaded stocks   : {', '.join(sorted(stocks)) if stocks else 'NONE'}")
     log.info(f"  Stocks folder   : {os.path.abspath(STOCKS_FOLDER)}/")
     log.info(f"  Log file        : {os.path.abspath(LOG_FILE)}")
+    log.info(f"  Scan interval   : {SCAN_INTERVAL} min")
+    log.info(f"  Vol warmup      : {VOL_WARMUP_SCANS} unique readings required")
     log.info(f"  Starting balance: {portfolio.starting_balance:,.0f} TRY")
     log.info(f"  Telegram : {'ON' if TELEGRAM_ENABLED else 'OFF'}")
     log.info(f"  Email    : {'ON' if EMAIL_ENABLED else 'OFF'}")
     log.info("=" * 50)
     log.info("💡 To add a stock: create stocks/SYMBOL.txt")
 
-    scan()
-    schedule.every(10).minutes.do(scan)
+    # Sleep until market opens instead of busy-waiting
+    now = datetime.now()
+    if not session_open():
+        if now.weekday() < 5 and now.hour < SESSION_START:
+            wake = now.replace(hour=SESSION_START, minute=0, second=5, microsecond=0)
+            secs = (wake - now).seconds
+            log.info(f"Market opens at {SESSION_START}:00. Sleeping {secs//60}m{secs%60}s ...")
+            time.sleep(secs)
+        else:
+            log.info("Session closed. Bot will wait for next session.")
 
-    log.info("Bot running. Press Ctrl+C to stop.")
+    scan()
+    schedule.every(SCAN_INTERVAL).minutes.do(scan)
+
+    log.info(f"Bot running. Scanning every {SCAN_INTERVAL} min. Press Ctrl+C to stop.")
     while True:
         schedule.run_pending()
         time.sleep(30)
