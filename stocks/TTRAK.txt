@@ -1,11 +1,16 @@
-# Türk Traktör — Technical Levels
-# Updated: 18.03.2026
+# Turk Traktor ve Ziraat Makineleri A.S. — Technical Levels
+# Last updated    : 09.04.2026 10:35
+# Trend           : down (strong)
+# Pattern         : Descending Channel — failed bounce after March capitulation selloff
+# Summary         : TTRAK is in a sustained weekly downtrend, having collapsed from its ~1,050 peak in mid-2024 to the current ~454 level, a loss of over 57%. The daily chart shows a sharp March 2026 selloff from ~620 with a brief consolidation around 460–480 now breaking down again, confirmed by today's high-volume red candle. No reversal pattern is visible; the path of least resistance remains to the downside with next meaningful support at the 434 session low.
 
-name              = Türk Traktör
-strong_support    = 440.00
-mid_support       = 460.00
-resistance_1      = 480.00
-resistance_2      = 502.50
-resistance_3      = 575.00
-stop_pct          = 0.04
+name              = Turk Traktor ve Ziraat Makineleri A.S.
+strong_support    = 434.25
+mid_support       = 444.00
+resistance_1      = 465.00
+resistance_2      = 487.00
+resistance_3      = 522.00
+stop_pct          = 0.05
 volume_multiplier = 1.5
+#trend             = down
+#trend_strength    = strong

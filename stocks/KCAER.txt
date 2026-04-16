@@ -1,11 +1,16 @@
-# Kocaer Çelik — Technical Levels
-# Updated: 18.03.2026
+# Kocaer Celik Sanayi ve Ticaret AS — Technical Levels
+# Last updated    : 09.04.2026 10:33
+# Trend           : down (weak)
+# Pattern         : Base formation near 10.00 — potential double bottom
+# Summary         : KCAER is in a long-term downtrend from its early-2024 peak near 22 TRY, currently consolidating around 11.40 TRY after repeatedly finding support at the 10.00 level. Short-term price action on the hourly chart is range-bound between 10.95 and 11.60, suggesting the downtrend is losing momentum and a base may be forming. A daily close above 11.60 with above-average volume is needed to confirm any meaningful reversal.
 
-name              = Kocaer Çelik
-strong_support    = 11.00
-mid_support       = 11.80
-resistance_1      = 12.20
-resistance_2      = 12.60
-resistance_3      = 14.05
+name              = Kocaer Celik Sanayi ve Ticaret AS
+strong_support    = 10.00
+mid_support       = 10.95
+resistance_1      = 11.60
+resistance_2      = 12.20
+resistance_3      = 13.50
 stop_pct          = 0.04
 volume_multiplier = 1.5
+#trend             = down
+#trend_strength    = weak

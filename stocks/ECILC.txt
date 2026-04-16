@@ -1,11 +1,16 @@
-# Eczacibasi Pharma — Technical Levels
-# Updated: 18.03.2026
+# EIS Eczacibasi Ilac, Sinai ve Finansal Yatirimlar Sanayi ve Ticaret A.S. — Technical Levels
+# Last updated    : 09.04.2026 10:31
+# Trend           : down (strong)
+# Pattern         : Descending Channel
+# Summary         : ECILC peaked around 134 TRY in late Nov/Dec 2025 and has been in a clear descending channel since, now trading at ~109.7 TRY with consistent lower highs and lower lows on both daily and weekly timeframes. Immediate support is at ~104 TRY (recent multi-touch lows from early April), while the 112 TRY level is the nearest resistance that bulls must reclaim with volume to signal a trend shift. Until a confirmed break above 112, any bounce remains a counter-trend move within the dominant downtrend.
 
-name              = Eczacibasi Pharma
-strong_support    = 112.00
-mid_support       = 114.00
-resistance_1      = 117.00
-resistance_2      = 120.00
-resistance_3      = 128.00
-stop_pct          = 0.03
+name              = EIS Eczacibasi Ilac, Sinai ve Finansal Yatirimlar Sanayi ve Ticaret A.S.
+strong_support    = 95.00
+mid_support       = 104.00
+resistance_1      = 112.00
+resistance_2      = 116.50
+resistance_3      = 122.00
+stop_pct          = 0.05
 volume_multiplier = 1.5
+#trend             = down
+#trend_strength    = strong
